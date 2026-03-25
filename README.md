@@ -1,8 +1,5 @@
 # 🔒 tools-methodologies
 
-Private Obsidian knowledge base — HTB CPTS methodology library and blog content drafts.
-
-> **This repository is private.** Never make it public.
 
 ---
 
@@ -19,10 +16,5 @@ tools-methodologies/
 ├── 06-Web-Attacks/           # SQLi, LFI, file upload, SSRF
 ├── 07-Pillaging/             # Credential hunting
 ├── 08-Reporting/             # Report structure and references
-└── Templates/
-    ├── Engagement Template.md          # Per-box working notes
-    ├── HTB Walkthrough Template.md     # Blog walkthrough post
-    ├── Engagement Report Template.md   # Blog report post
-    ├── ProLab Report Template.md       # ProLab blog report
-    └── Vulnerability Write-Up Template.md
+
 ```
