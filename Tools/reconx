@@ -1,0 +1,102 @@
+
+#!/usr/bin/env bash
+# reconX — Automated Engagement Recon
+# Usage: ./reconx.sh <target> [--web-only] [--no-smb]
+
+TARGET="$1"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+OUTDIR="./engagements/${TARGET}-${TIMESTAMP}"
+WORDLIST="/usr/share/seclists/Discovery/Web-Content/raft-medium-directories.txt"
+
+# --- Setup ---
+mkdir -p "$OUTDIR"/{recon,web,smb,ftp,notes}
+echo "[*] reconX starting — target: $TARGET"
+echo "[*] Output directory: $OUTDIR"
+
+# --- Phase 1: Fast port sweep ---
+echo "[*] Phase 1: Fast port sweep..."
+nmap -p- --min-rate 5000 -oA "$OUTDIR/recon/allports" "$TARGET" > /dev/null 2>&1
+PORTS=$(grep "^[0-9]" "$OUTDIR/recon/allports.nmap" | cut -d'/' -f1 | tr '\n' ',' | sed 's/,$//')
+
+if [ -z "$PORTS" ]; then
+    echo "[-] No open ports found. Exiting."
+    exit 1
+fi
+
+echo "[+] Open ports: $PORTS"
+
+# --- Phase 2: Deep service scan ---
+echo "[*] Phase 2: Service/version scan on $PORTS..."
+nmap -p "$PORTS" -sC -sV -oA "$OUTDIR/recon/targeted" "$TARGET" > /dev/null 2>&1
+
+# --- Phase 3: Web enumeration (if 80/443/8080/8443 open) ---
+for PORT in 80 443 8080 8443; do
+    if echo "$PORTS" | grep -q "$PORT"; then
+        SCHEME="http"
+        [ "$PORT" == "443" ] || [ "$PORT" == "8443" ] && SCHEME="https"
+        URL="${SCHEME}://${TARGET}:${PORT}"
+
+        echo "[*] Phase 3: Web enumeration on $URL..."
+        
+        # WhatWeb fingerprint
+        whatweb "$URL" -a 3 --log-verbose="$OUTDIR/web/whatweb-${PORT}.txt" > /dev/null 2>&1
+        
+        # Directory fuzzing
+        ffuf -w "$WORDLIST" \
+             -u "${URL}/FUZZ" \
+             -mc 200,204,301,302,307,401,403 \
+             -o "$OUTDIR/web/ffuf-${PORT}.json" \
+             -of json \
+             -t 40 \
+             -s > /dev/null 2>&1
+
+        echo "[+] Web enum complete for port $PORT"
+    fi
+done
+
+# --- Phase 4: SMB enumeration (if 445 open) ---
+if echo "$PORTS" | grep -q "445"; then
+    echo "[*] Phase 4: SMB enumeration..."
+    enum4linux-ng -A "$TARGET" > "$OUTDIR/smb/enum4linux.txt" 2>&1
+    smbclient -N -L "//$TARGET" > "$OUTDIR/smb/smbclient-shares.txt" 2>&1
+    echo "[+] SMB enum complete"
+fi
+
+# --- Phase 5: FTP check (if 21 open) ---
+if echo "$PORTS" | grep -q "21"; then
+    echo "[*] Phase 5: FTP anonymous check..."
+    timeout 10 ftp -n "$TARGET" <<EOF > "$OUTDIR/ftp/anon-check.txt" 2>&1
+quote USER anonymous
+quote PASS anon@test.com
+ls -la
+quit
+EOF
+    echo "[+] FTP check complete"
+fi
+
+# --- Generate summary ---
+echo "[*] Generating recon_summary.md..."
+{
+    echo "# Recon Summary — $TARGET"
+    echo "_Generated: $(date)_"
+    echo ""
+    echo "## Open Ports"
+    echo '```'
+    grep "^[0-9]" "$OUTDIR/recon/allports.nmap"
+    echo '```'
+    echo ""
+    echo "## Service Versions"
+    echo '```'
+    grep "^[0-9]" "$OUTDIR/recon/targeted.nmap" | grep "open"
+    echo '```'
+    echo ""
+    echo "## Notes"
+    echo "- [ ] Review web findings in \`web/\`"
+    echo "- [ ] Check SMB shares for sensitive files"
+    echo "- [ ] Search CVEs for identified service versions"
+} > "$OUTDIR/recon_summary.md"
+
+echo ""
+echo "[+] reconX complete."
+echo "[+] Summary: $OUTDIR/recon_summary.md"
+echo "[+] Full output: $OUTDIR/"
